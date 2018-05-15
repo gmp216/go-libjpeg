@@ -1,5 +1,6 @@
 package jpeg
-
+// #cgo CFLAGS: -I/usr/local/opt/jpeg-turbo/include
+// #cgo LDFLAGS: -L/usr/local/opt/jpeg-turbo/lib
 /*
 #include <stdio.h>
 #include <stdlib.h>
