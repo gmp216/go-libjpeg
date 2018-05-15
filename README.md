@@ -9,6 +9,32 @@ An implementation of Go binding for LibJpeg (preferably libjpeg-turbo).
 The core codes are picked from [go-thumber](http://github.com/pixiv/go-thumber)
 and rewritten to compatible with image.Image interface.
 
+This fork is a rough draft of an interface for streaming image decoding.
+If you pass a channel to jpeg.Decode, the decoder will send back partially
+decoded images. Each partial image is a Subimage pointing to the same
+underlying pixel data.
+
+## Streaming Example
+```
+import (
+	"image"
+	"github.com/gmp216/go-libjpeg/jpeg"
+)
+
+func main() {
+	...
+	ch := make(chan image.Image)
+	go func() {
+		for im := range(ch) {
+			fmt.Println("subimage ",im.Bounds())
+		}
+	}()
+	i, err := jpeg.Decode(fd,&jpeg.DecoderOptions{},ch)
+	...
+}
+
+```
+
 ## Usage
 
 ```
