@@ -1,5 +1,6 @@
 package jpeg
-
+// #cgo CFLAGS: -I/usr/local/opt/jpeg-turbo/include
+// #cgo LDFLAGS: -L/usr/local/opt/jpeg-turbo/lib
 /*
 #include <stdio.h>
 #include <stdlib.h>
@@ -351,7 +352,13 @@ func DecodeIntoRGB(r io.Reader, options *DecoderOptions, chs ...chan image.Image
 		runtime.Gosched()
 	}
 
-	for last := readScanLines(dinfo, dest.Pix, dest.Stride); last == false; stream(last) { }
+	for {
+		last := readScanLines(dinfo, dest.Pix, dest.Stride)
+		stream(last)
+		if last {
+			break
+		}
+	}
 	return
 }
 
@@ -401,7 +408,13 @@ func DecodeIntoRGBA(r io.Reader, options *DecoderOptions, chs ...chan image.Imag
 		runtime.Gosched()
 	}
 
-	for last := readScanLines(dinfo, dest.Pix, dest.Stride); last == false; stream(last) { }
+	for {
+		last := readScanLines(dinfo, dest.Pix, dest.Stride)
+		stream(last)
+		if last {
+			break
+		}
+	}
 	return
 }
 
