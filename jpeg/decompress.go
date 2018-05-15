@@ -51,9 +51,15 @@ static int DCT_v_scaled_size(j_decompress_ptr dinfo, int component) {
 #endif
 }
 
-static void decode_gray(j_decompress_ptr dinfo, JSAMPROW pix, int stride, int imcu_rows) {
+static int decode_gray(j_decompress_ptr dinfo, JSAMPROW pix, int stride, int imcu_rows) {
 	JSAMPROW *rows = alloca(sizeof(JSAMPROW) * ALIGN_SIZE);
-	while (dinfo->output_scanline < dinfo->output_height) {
+
+	JDIMENSION start = dinfo->output_scanline;
+
+	while (dinfo->output_scanline < start+64) {
+		if (dinfo->output_scanline >= dinfo->output_height) {
+			return 0;
+		}
 		int h = 0;
 		for (h = 0; h < imcu_rows; h++) {
 			rows[h] = &pix[stride*(dinfo->output_scanline + h)];
@@ -61,9 +67,14 @@ static void decode_gray(j_decompress_ptr dinfo, JSAMPROW pix, int stride, int im
 		// Get the data
 		jpeg_read_raw_data(dinfo, &rows, 2 * imcu_rows);
 	}
+	if (dinfo->output_scanline >= dinfo->output_height) {
+		return 0;
+	} else {
+		return 1;
+	}
 }
 
-static void decode_ycbcr(j_decompress_ptr dinfo, JSAMPROW y_row, JSAMPROW cb_row, JSAMPROW cr_row, int y_stride, int c_stride, int color_v_div, int imcu_rows) {
+static int decode_ycbcr(j_decompress_ptr dinfo, JSAMPROW y_row, JSAMPROW cb_row, JSAMPROW cr_row, int y_stride, int c_stride, int color_v_div, int imcu_rows) {
 	// Allocate JSAMPIMAGE to hold pointers to one iMCU worth of image data
 	// this is a safe overestimate; we use the return value from
 	// jpeg_read_raw_data to figure out what is the actual iMCU row count.
@@ -72,7 +83,12 @@ static void decode_ycbcr(j_decompress_ptr dinfo, JSAMPROW y_row, JSAMPROW cb_row
 	JSAMPROW *cr_rows = alloca(sizeof(JSAMPROW) * ALIGN_SIZE);
 	JSAMPARRAY image[] = { y_rows, cb_rows, cr_rows };
 
-	while (dinfo->output_scanline < dinfo->output_height) {
+	JDIMENSION start = dinfo->output_scanline;
+
+	while  (dinfo->output_scanline < start+64) {
+		if (dinfo->output_scanline >= dinfo->output_height) {
+			return 0;
+		}
 		// First fill in the pointers into the plane data buffers
 		int h = 0;
 		for (h = 0; h < imcu_rows; h++) {
@@ -82,6 +98,11 @@ static void decode_ycbcr(j_decompress_ptr dinfo, JSAMPROW y_row, JSAMPROW cb_row
 		}
 		// Get the data
 		jpeg_read_raw_data(dinfo, image, 2 * imcu_rows);
+	}
+	if (dinfo->output_scanline >= dinfo->output_height) {
+		return 0;
+	} else {
+		return 1;
 	}
 }
 
@@ -95,6 +116,7 @@ import (
 	"image/color"
 	"io"
 	"unsafe"
+	"runtime"
 
 	"github.com/pixiv/go-libjpeg/rgb"
 )
@@ -137,7 +159,7 @@ func SupportRGBA() bool {
 
 // Decode reads a JPEG data stream from r and returns decoded image as an image.Image.
 // Output image has YCbCr colors or 8bit Grayscale.
-func Decode(r io.Reader, options *DecoderOptions) (dest image.Image, err error) {
+func Decode(r io.Reader, options *DecoderOptions, chs ...chan image.Image) (dest image.Image, err error) {
 	dinfo := newDecompress(r)
 	if dinfo == nil {
 		return nil, errors.New("allocation failed")
@@ -161,13 +183,13 @@ func Decode(r io.Reader, options *DecoderOptions) (dest image.Image, err error) 
 		if dinfo.jpeg_color_space != C.JCS_GRAYSCALE {
 			return nil, errors.New("Image has unsupported colorspace")
 		}
-		dest, err = decodeGray(dinfo)
+		dest, err = decodeGray(dinfo,chs)
 	case 3:
 		switch dinfo.jpeg_color_space {
 		case C.JCS_YCbCr:
-			dest, err = decodeYCbCr(dinfo)
+			dest, err = decodeYCbCr(dinfo,chs)
 		case C.JCS_RGB:
-			dest, err = decodeRGB(dinfo)
+			dest, err = decodeRGB(dinfo,chs)
 		default:
 			return nil, errors.New("Image has unsupported colorspace")
 		}
@@ -175,7 +197,7 @@ func Decode(r io.Reader, options *DecoderOptions) (dest image.Image, err error) 
 	return
 }
 
-func decodeGray(dinfo *C.struct_jpeg_decompress_struct) (dest *image.Gray, err error) {
+func decodeGray(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (dest *image.Gray, err error) {
 	// output dawnsampled raw data before starting decompress
 	dinfo.raw_data_out = C.TRUE
 
@@ -192,7 +214,7 @@ func decodeGray(dinfo *C.struct_jpeg_decompress_struct) (dest *image.Gray, err e
 	return
 }
 
-func decodeYCbCr(dinfo *C.struct_jpeg_decompress_struct) (dest *image.YCbCr, err error) {
+func decodeYCbCr(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (dest *image.YCbCr, err error) {
 	// output dawnsampled raw data before starting decompress
 	dinfo.raw_data_out = C.TRUE
 
@@ -229,7 +251,7 @@ func decodeYCbCr(dinfo *C.struct_jpeg_decompress_struct) (dest *image.YCbCr, err
 		return nil, errors.New("Unsupported color subsampling")
 	}
 
-	// Allocate distination iamge
+	// Allocate distination image
 	dest = NewYCbCrAligned(image.Rect(0, 0, int(dinfo.output_width), int(dinfo.output_height)), subsampleRatio)
 
 	var iMCURows int
@@ -241,22 +263,44 @@ func decodeYCbCr(dinfo *C.struct_jpeg_decompress_struct) (dest *image.YCbCr, err
 	}
 	//fmt.Printf("iMCU_rows: %d (div: %d)\n", iMCURows, colorVDiv)
 
-	C.decode_ycbcr(dinfo,
-		C.JSAMPROW(unsafe.Pointer(&dest.Y[0])),
-		C.JSAMPROW(unsafe.Pointer(&dest.Cb[0])),
-		C.JSAMPROW(unsafe.Pointer(&dest.Cr[0])),
-		C.int(dest.YStride),
-		C.int(dest.CStride),
-		C.int(colorVDiv),
-		C.int(iMCURows),
-	)
+	prevRow := int(dinfo.output_scanline)
+	stream := func(last bool) {
+		if len(chs) > 0 {
+			lastRow := int(dinfo.output_scanline)
+			if last == false { lastRow -= 1 }
+			dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
+			chs[0]<- dest.SubImage(dr)
+			if last {
+				close(chs[0])
+			} else {
+				prevRow = int(dinfo.output_scanline)
+			}
+		}
+		runtime.Gosched()
+	}
+	for {
+		if C.decode_ycbcr(dinfo,
+			C.JSAMPROW(unsafe.Pointer(&dest.Y[0])),
+			C.JSAMPROW(unsafe.Pointer(&dest.Cb[0])),
+			C.JSAMPROW(unsafe.Pointer(&dest.Cr[0])),
+			C.int(dest.YStride),
+			C.int(dest.CStride),
+			C.int(colorVDiv),
+			C.int(iMCURows),
+			) > 0 {
+			stream(false)
+		} else {
+			stream(true)
+			break
+		}
+	}
 
 	C.jpeg_finish_decompress(dinfo)
 	return
 }
 
 // TODO: supports decoding into image.RGBA instead of rgb.Image.
-func decodeRGB(dinfo *C.struct_jpeg_decompress_struct) (dest *rgb.Image, err error) {
+func decodeRGB(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (dest *rgb.Image, err error) {
 	C.jpeg_calc_output_dimensions(dinfo)
 	dest = rgb.NewImage(image.Rect(0, 0, int(dinfo.output_width), int(dinfo.output_height)))
 
@@ -266,7 +310,7 @@ func decodeRGB(dinfo *C.struct_jpeg_decompress_struct) (dest *rgb.Image, err err
 }
 
 // DecodeIntoRGB reads a JPEG data stream from r and returns decoded image as an rgb.Image with RGB colors.
-func DecodeIntoRGB(r io.Reader, options *DecoderOptions) (dest *rgb.Image, err error) {
+func DecodeIntoRGB(r io.Reader, options *DecoderOptions, chs ...chan image.Image) (dest *rgb.Image, err error) {
 	dinfo := newDecompress(r)
 	if dinfo == nil {
 		return nil, errors.New("allocation failed")
@@ -289,13 +333,31 @@ func DecodeIntoRGB(r io.Reader, options *DecoderOptions) (dest *rgb.Image, err e
 	dest = rgb.NewImage(image.Rect(0, 0, int(dinfo.output_width), int(dinfo.output_height)))
 
 	dinfo.out_color_space = C.JCS_RGB
-	readScanLines(dinfo, dest.Pix, dest.Stride)
+	prevRow := int(dinfo.output_scanline)
+	stream := func(last bool) {
+		if len(chs) > 0 {
+			//TODO: rgb.Image does not implement SubImage()
+			//lastRow := int(dinfo.output_scanline)
+			//if last == false { lastRow -= 1 }
+			//dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
+			//chs[0]<- dest.SubImage(dr)
+			chs[0]<- dest
+			if last {
+				close(chs[0])
+			} else {
+				prevRow = int(dinfo.output_scanline)
+			}
+		}
+		runtime.Gosched()
+	}
+
+	for last := readScanLines(dinfo, dest.Pix, dest.Stride); last == false; stream(last) { }
 	return
 }
 
 // DecodeIntoRGBA reads a JPEG data stream from r and returns decoded image as an image.RGBA with RGBA colors.
 // This function only works with libjpeg-turbo, not libjpeg.
-func DecodeIntoRGBA(r io.Reader, options *DecoderOptions) (dest *image.RGBA, err error) {
+func DecodeIntoRGBA(r io.Reader, options *DecoderOptions, chs ...chan image.Image) (dest *image.RGBA, err error) {
 	dinfo := newDecompress(r)
 	if dinfo == nil {
 		return nil, errors.New("allocation failed")
@@ -323,17 +385,43 @@ func DecodeIntoRGBA(r io.Reader, options *DecoderOptions) (dest *image.RGBA, err
 	}
 
 	dinfo.out_color_space = colorSpace
-	readScanLines(dinfo, dest.Pix, dest.Stride)
+	prevRow := int(dinfo.output_scanline)
+	stream := func(last bool) {
+		if len(chs) > 0 {
+			lastRow := int(dinfo.output_scanline)
+			if last == false { lastRow -= 1 }
+			dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
+			chs[0]<- dest.SubImage(dr)
+			if last {
+				close(chs[0])
+			} else {
+				prevRow = int(dinfo.output_scanline)
+			}
+		}
+		runtime.Gosched()
+	}
+
+	for last := readScanLines(dinfo, dest.Pix, dest.Stride); last == false; stream(last) { }
 	return
 }
 
-func readScanLines(dinfo *C.struct_jpeg_decompress_struct, buf []uint8, stride int) {
+func readScanLines(dinfo *C.struct_jpeg_decompress_struct, buf []uint8, stride int) bool {
 	C.jpeg_start_decompress(dinfo)
-	for dinfo.output_scanline < dinfo.output_height {
+	start := dinfo.output_scanline;
+	for dinfo.output_scanline < start+64 {
+		if dinfo.output_scanline >= dinfo.output_height {
+			C.jpeg_finish_decompress(dinfo)
+			return true
+		}
 		pbuf := (*C.uchar)(unsafe.Pointer(&buf[stride*int(dinfo.output_scanline)]))
 		C.read_scanlines(dinfo, pbuf, C.int(stride), dinfo.rec_outbuf_height)
 	}
-	C.jpeg_finish_decompress(dinfo)
+	if dinfo.output_scanline >= dinfo.output_height {
+		C.jpeg_finish_decompress(dinfo)
+		return true
+	} else {
+		return false
+	}
 }
 
 // DecodeConfig returns the color model and dimensions of a JPEG image without decoding the entire image.
