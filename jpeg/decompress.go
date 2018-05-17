@@ -332,7 +332,7 @@ func decodeRGB(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (
 	dest = rgb.NewImage(image.Rect(0, 0, int(dinfo.output_width), int(dinfo.output_height)))
 
 	dinfo.out_color_space = C.JCS_RGB
-	prevRow := int(dinfo.output_scanline)
+	//prevRow := int(dinfo.output_scanline)
 	stream := func(last bool) {
 		if len(chs) > 0 {
 			//TODO: rgb.Image does not implement SubImage()
@@ -346,7 +346,7 @@ func decodeRGB(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = lastRow
+				//prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
@@ -386,7 +386,7 @@ func DecodeIntoRGB(r io.Reader, options *DecoderOptions, chs ...chan image.Image
 	dest = rgb.NewImage(image.Rect(0, 0, int(dinfo.output_width), int(dinfo.output_height)))
 
 	dinfo.out_color_space = C.JCS_RGB
-	prevRow := 0
+	//prevRow := 0
 	stream := func(last bool) {
 		if len(chs) > 0 {
 			//TODO: rgb.Image does not implement SubImage()
@@ -400,7 +400,7 @@ func DecodeIntoRGB(r io.Reader, options *DecoderOptions, chs ...chan image.Image
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = lastRow
+				//prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
