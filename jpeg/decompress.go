@@ -209,17 +209,19 @@ func decodeGray(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) 
 
 	iMCURows := int(C.DCT_v_scaled_size(dinfo, C.int(0)) * compInfo[0].v_samp_factor)
 
-	prevRow := int(dinfo.output_scanline)
+	prevRow := 0
 	stream := func(last bool) {
 		if len(chs) > 0 {
 			lastRow := int(dinfo.output_scanline)
-			if last == false { lastRow -= 1 }
+			if last == false {
+				lastRow -= lastRow % 64
+			}
 			dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
 			chs[0]<- dest.SubImage(dr)
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = int(dinfo.output_scanline)
+				prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
@@ -286,17 +288,19 @@ func decodeYCbCr(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image)
 	}
 	//fmt.Printf("iMCU_rows: %d (div: %d)\n", iMCURows, colorVDiv)
 
-	prevRow := int(dinfo.output_scanline)
+	prevRow := 0
 	stream := func(last bool) {
 		if len(chs) > 0 {
 			lastRow := int(dinfo.output_scanline)
-			if last == false { lastRow -= 1 }
+			if last == false {
+				lastRow -= lastRow % 64
+			}
 			dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
 			chs[0]<- dest.SubImage(dr)
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = int(dinfo.output_scanline)
+				prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
@@ -333,14 +337,16 @@ func decodeRGB(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (
 		if len(chs) > 0 {
 			//TODO: rgb.Image does not implement SubImage()
 			//lastRow := int(dinfo.output_scanline)
-			//if last == false { lastRow -= 1 }
+			//if last == false {
+			//	lastRow -= lastRow % 64
+			//}
 			//dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
 			//chs[0]<- dest.SubImage(dr)
 			chs[0]<- dest
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = int(dinfo.output_scanline)
+				prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
@@ -380,19 +386,21 @@ func DecodeIntoRGB(r io.Reader, options *DecoderOptions, chs ...chan image.Image
 	dest = rgb.NewImage(image.Rect(0, 0, int(dinfo.output_width), int(dinfo.output_height)))
 
 	dinfo.out_color_space = C.JCS_RGB
-	prevRow := int(dinfo.output_scanline)
+	prevRow := 0
 	stream := func(last bool) {
 		if len(chs) > 0 {
 			//TODO: rgb.Image does not implement SubImage()
 			//lastRow := int(dinfo.output_scanline)
-			//if last == false { lastRow -= 1 }
+			//if last == false {
+			//	lastRow -= lastRow % 64
+			//}
 			//dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
 			//chs[0]<- dest.SubImage(dr)
 			chs[0]<- dest
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = int(dinfo.output_scanline)
+				prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
@@ -438,17 +446,19 @@ func DecodeIntoRGBA(r io.Reader, options *DecoderOptions, chs ...chan image.Imag
 	}
 
 	dinfo.out_color_space = colorSpace
-	prevRow := int(dinfo.output_scanline)
+	prevRow := 0
 	stream := func(last bool) {
 		if len(chs) > 0 {
 			lastRow := int(dinfo.output_scanline)
-			if last == false { lastRow -= 1 }
+			if last == false {
+				lastRow -= lastRow % 64
+			}
 			dr := image.Rect(0,prevRow,int(dinfo.output_width),lastRow)
 			chs[0]<- dest.SubImage(dr)
 			if last {
 				close(chs[0])
 			} else {
-				prevRow = int(dinfo.output_scanline)
+				prevRow = lastRow
 			}
 		}
 		runtime.Gosched()
@@ -472,7 +482,7 @@ func readScanLines(dinfo *C.struct_jpeg_decompress_struct, buf []uint8, stride i
 			return true
 		}
 		pbuf := (*C.uchar)(unsafe.Pointer(&buf[stride*int(dinfo.output_scanline)]))
-		C.read_scanlines(dinfo, pbuf, C.int(stride), dinfo.rec_outbuf_height)
+		C.read_scanlines(dinfo, pbuf, C.int(stride), 64)
 	}
 	if dinfo.output_scanline >= dinfo.output_height {
 		C.jpeg_finish_decompress(dinfo)
