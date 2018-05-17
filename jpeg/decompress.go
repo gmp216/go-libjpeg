@@ -233,6 +233,7 @@ func decodeGray(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) 
 			stream(true)
 			break
 		}
+		runtime.Gosched()
 	}
 
 	C.jpeg_finish_decompress(dinfo)
@@ -320,6 +321,7 @@ func decodeYCbCr(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image)
 			stream(true)
 			break
 		}
+		runtime.Gosched()
 	}
 
 	C.jpeg_finish_decompress(dinfo)
@@ -358,6 +360,7 @@ func decodeRGB(dinfo *C.struct_jpeg_decompress_struct, chs []chan image.Image) (
 		if last {
 			return
 		}
+		runtime.Gosched()
 	}
 	return
 }
@@ -413,6 +416,7 @@ func DecodeIntoRGB(r io.Reader, options *DecoderOptions, chs ...chan image.Image
 		if last {
 			return
 		}
+		runtime.Gosched()
 	}
 }
 
@@ -471,6 +475,7 @@ func DecodeIntoRGBA(r io.Reader, options *DecoderOptions, chs ...chan image.Imag
 		if last {
 			return
 		}
+		runtime.Gosched()
 	}
 }
 
